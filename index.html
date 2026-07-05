@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>geomag · taller</title>
+  <style>
+    :root {
+      --fg: #e8eaf0;
+      --dim: #8a92a6;
+      --panel: rgba(16, 19, 26, 0.72);
+      --line: rgba(255, 255, 255, 0.08);
+    }
+    * { margin: 0; box-sizing: border-box; }
+    body {
+      font: 13px/1.5 "SF Mono", ui-monospace, Menlo, monospace;
+      color: var(--fg);
+      overflow: hidden;
+      background: #10131a;
+    }
+    #app { position: fixed; inset: 0; }
+    .panel {
+      position: fixed;
+      padding: 12px 14px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      backdrop-filter: blur(8px);
+    }
+    #title { top: 14px; left: 14px; }
+    #title h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.12em; }
+    #title h1 span { color: var(--dim); font-weight: 400; }
+    #count { color: var(--dim); margin-top: 2px; }
+    #help { bottom: 14px; left: 14px; color: var(--dim); }
+    #help b { color: var(--fg); font-weight: 500; }
+    #tools { top: 14px; right: 14px; display: flex; flex-direction: column; gap: 10px; }
+    #swatches { display: flex; gap: 8px; }
+    .swatch {
+      width: 26px; height: 26px;
+      border-radius: 50%;
+      border: 2px solid transparent;
+      cursor: pointer;
+      transition: transform 0.1s;
+    }
+    .swatch:hover { transform: scale(1.15); }
+    .swatch.active { border-color: var(--fg); }
+    #buttons { display: flex; flex-direction: column; gap: 6px; }
+    #buttons button {
+      font: inherit;
+      color: var(--fg);
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 5px 10px;
+      cursor: pointer;
+      text-align: left;
+    }
+    #buttons button:hover { background: rgba(255, 255, 255, 0.12); }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="app"></div>
+
+  <div id="title" class="panel">
+    <h1>GEOMAG <span>· taller</span></h1>
+    <div id="count"></div>
+  </div>
+
+  <div id="tools" class="panel">
+    <div id="swatches"></div>
+    <div id="buttons">
+      <button id="undo">deshacer ⌘Z</button>
+      <button id="reset">empezar de cero</button>
+      <button id="export">exportar .json</button>
+      <button id="import">importar .json</button>
+    </div>
+    <input id="file" type="file" accept=".json" hidden />
+  </div>
+
+  <div id="help" class="panel">
+    <b>clic</b> en una bola: seleccionar · <b>clic</b> en un fantasma: añadir barra<br />
+    <b>clic derecho</b>: borrar bola o barra · <b>1–4</b>: color · <b>esc</b>: soltar<br />
+    <b>arrastrar</b>: orbitar · <b>rueda</b>: zoom · <b>arrastrar dcho</b>: desplazar
+  </div>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
