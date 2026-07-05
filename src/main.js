@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { Structure, PANEL_TYPES, rodEnds } from './structure.js';
+import { Structure, PANEL_TYPES, DIRECTION_MODES, rodEnds } from './structure.js';
 import { relax, residual, Gravity } from './solver.js';
 
 const BALL_R = 0.22;
@@ -31,6 +31,7 @@ const gravity = new Gravity();
 let gravityOn = false;
 let selected = null; // id de la bola seleccionada, o null
 let mode = { kind: 'rod', color: 'amarillo' }; // o { kind: 'panel', type }
+let dirMode = 'diagonales'; // qué juego de ejes sugieren los fantasmas
 
 // ---------------------------------------------------------------- escena
 
@@ -249,7 +250,7 @@ function refreshGhosts() {
   previewRod.visible = false;
   marker.visible = Boolean(selected);
   if (!selected) return;
-  for (const cand of structure.candidates(selected)) {
+  for (const cand of structure.candidates(selected, DIRECTION_MODES[dirMode])) {
     const link = cand.kind === 'link';
     const mesh = new THREE.Mesh(ballGeo, link ? ghostLinkMat : ghostMat);
     mesh.scale.setScalar(link ? 1.3 : 0.8);
@@ -408,6 +409,7 @@ addEventListener('keydown', (e) => {
     select(null);
     setMode({ kind: 'rod', color: mode.color ?? 'amarillo' });
   }
+  if (e.key === 'e') cycleAxes();
   const rods = Object.keys(ROD_COLORS);
   const panels = Object.keys(PANEL_TYPES);
   const n = Number(e.key);
@@ -430,7 +432,16 @@ const hud = {
   panelTray: document.getElementById('panel-tray'),
   toast: document.getElementById('toast'),
   gravity: document.getElementById('gravity'),
+  axes: document.getElementById('axes'),
 };
+
+function cycleAxes() {
+  const names = Object.keys(DIRECTION_MODES);
+  dirMode = names[(names.indexOf(dirMode) + 1) % names.length];
+  hud.axes.textContent = `ejes: ${dirMode}`;
+  refreshGhosts();
+}
+hud.axes.addEventListener('click', cycleAxes);
 
 const PANEL_SHAPES = {
   triangulo: '<polygon points="12,3 22,21 2,21"/>',

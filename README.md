@@ -17,8 +17,12 @@ y abrir http://localhost:3000 (o el puerto que diga).
 
 ## Cómo se juega
 
-- **clic** en una bola → se selecciona y aparecen 12 *fantasmas* (las
-  direcciones clásicas). Clic en un fantasma añade barra + bola y encadena.
+- **clic** en una bola → se selecciona y aparecen los *fantasmas*: las
+  direcciones sugeridas. Clic en un fantasma añade barra + bola y encadena.
+- **e** (o el botón "ejes") cambia el juego de direcciones: **diagonales**
+  (FCC: tetraedros, octaedros), **cúbicos** (torres rectas y cubos, que en
+  FCC son imposibles: no hay tres pasos perpendiculares) y **hexagonales**
+  (hexágonos con centro, prismas). Se mezclan en la misma estructura.
 - Los fantasmas **verdes** son el alcance del imán: enganchan con una bola
   que ya existe y cierran ciclos.
 - Elige un **panel** en la bandeja y los huecos donde cabe se iluminan;

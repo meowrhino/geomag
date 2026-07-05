@@ -19,6 +19,24 @@ export const STEPS = (() => {
   return steps;
 })();
 
+// Juegos de ejes alternativos al tocar una bola. Con el solver mandando,
+// las direcciones son pura sugerencia: se mezclan en la misma estructura.
+// Los diagonales (FCC) dan tetraedros y octaedros; los cúbicos, torres
+// rectas y cubos (imposibles en FCC: no hay 3 pasos perpendiculares);
+// los hexagonales, hexágonos con centro y prismas.
+export const DIRECTION_MODES = {
+  diagonales: STEPS,
+  cúbicos: [
+    [L, 0, 0], [-L, 0, 0], [0, L, 0], [0, -L, 0], [0, 0, L], [0, 0, -L],
+  ],
+  hexagonales: [
+    ...Array.from({ length: 6 }, (_, k) => [
+      L * Math.cos((k * Math.PI) / 3), 0, L * Math.sin((k * Math.PI) / 3),
+    ]),
+    [0, L, 0], [0, -L, 0],
+  ],
+};
+
 // El panel que eliges decide la forma: sus cuerdas fuerzan la geometría.
 // El cuadrado y el rombo son el mismo ciclo de 4 con distinta alma.
 export const PANEL_TYPES = {
@@ -172,10 +190,10 @@ export class Structure {
   // Colocaciones desde una bola: las 12 sugerencias FCC (bola nueva, o
   // enganche si ya hay una bola ahí) más el alcance del imán: cualquier
   // bola cercana sin barra en medio es enganchable.
-  candidates(fromId) {
+  candidates(fromId, steps = STEPS) {
     const from = this.balls.get(fromId);
     const out = new Map();
-    for (const step of STEPS) {
+    for (const step of steps) {
       const target = from.map((v, i) => v + step[i]);
       const near = this.nearestBall(target, 0.45 * L, fromId);
       if (near === null) out.set('@' + step, { kind: 'new', step });
