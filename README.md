@@ -1,8 +1,9 @@
 # geomag · taller
 
 Un modelador de Geomag en el navegador: bolas de acero, barras magnéticas
-de colores, y las 12 direcciones de siempre. Sin build, sin dependencias
-instaladas — un HTML, dos módulos ES y three.js desde CDN.
+y los paneles de la caja de siempre — triángulo verde, cuadrado azul,
+rombo amarillo y pentágono rojo. Sin build, sin dependencias instaladas:
+un HTML, tres módulos ES y three.js desde CDN.
 
 ## Correr
 
@@ -10,43 +11,57 @@ Cualquier servidor estático sirve:
 
 ```sh
 npx serve .
-# o
-python3 -m http.server 4173
 ```
 
-y abrir http://localhost:4173
+y abrir http://localhost:3000 (o el puerto que diga).
 
 ## Cómo se juega
 
-- **clic** en una bola → se selecciona y aparecen 12 *fantasmas* alrededor
-- **clic** en un fantasma → añade barra + bola (la nueva queda seleccionada,
-  así que puedes encadenar). Los fantasmas verdes cierran un ciclo con una
-  bola que ya existe.
-- **clic derecho** sobre bola o barra → borrar
-- **1–4** cambia el color de barra · **⌘Z** deshace · **esc** suelta
-- arrastrar orbita, rueda hace zoom, arrastrar con botón derecho desplaza
-- se guarda solo en `localStorage`; exportar/importar `.json` para compartir
+- **clic** en una bola → se selecciona y aparecen 12 *fantasmas* (las
+  direcciones clásicas). Clic en un fantasma añade barra + bola y encadena.
+- Los fantasmas **verdes** son el alcance del imán: enganchan con una bola
+  que ya existe y cierran ciclos.
+- Elige un **panel** en la bandeja y los huecos donde cabe se iluminan;
+  clic para colocarlo. El panel fuerza la forma: el mismo ciclo de 4 se
+  vuelve cuadrado o rombo según la pieza que metas, y 5 barras + panel
+  rojo = pentágono regular. Si la estructura no cede, "ese panel no encaja".
+- **gravedad** suelta tu criatura al mundo, a ver si aguanta (Verlet + suelo
+  con fricción; las estructuras se derrumban con la misma honestidad que
+  las de verdad).
+- **clic derecho** borra bola, barra o panel · **1–8** elige pieza ·
+  **⌘Z** deshace · **esc** suelta
+- Se guarda solo en `localStorage`; exportar/importar `.json` para compartir.
 
 ## La idea bonita
 
-Una estructura de Geomag es un **grafo embebido en el espacio**: las bolas
-son nodos y las barras aristas de longitud fija. Todas las figuras clásicas
-(triángulo, cuadrado, tetraedro, octaedro, pirámide) viven en la **red FCC**
-(cúbica centrada en caras): si una barra mide √2, cada bola cae en
-coordenadas *enteras*.
+Una estructura de Geomag es un **grafo embebido en el espacio**: bolas =
+nodos, barras = aristas de longitud fija. El modelo
+([src/structure.js](src/structure.js)) es puro — un `Map` de bolas, un
+`Map` de barras, un `Map` de paneles — y no sabe nada de three.js.
 
-Eso significa:
+Quien mantiene la geometría es el **solver**
+([src/solver.js](src/solver.js)): relajación por restricciones de
+distancia (*position-based dynamics*, ~50 líneas). Cada barra empuja sus
+dos bolas hacia su longitud; iterar converge. Un panel son cuerdas
+internas extra — las diagonales del polígono ideal (las del pentágono
+miden φ·L, el número áureo haciendo cameo) — así que **el panel que
+eliges decide la forma**, igual que en el juguete, donde encajar el panel
+rigidizaba y esculpía la figura. Si tras relajar el peor error relativo
+supera el 8%, la pieza no encaja y se rechaza sola.
 
-- cero deriva de coma flotante: una posición es un string `"x,y,z"` de enteros
-- una bola es una entrada en un `Set`, una barra en un `Map` — el modelo
-  entero ([src/structure.js](src/structure.js)) no sabe nada de three.js
-- deshacer = instantáneas JSON (el estado es diminuto)
-- la vista ([src/main.js](src/main.js)) hace un diff modelo→meshes tras
-  cada mutación; la escena nunca es la fuente de verdad
+Las 12 direcciones de la red FCC (permutaciones de (±1,±1,0), donde toda
+figura clásica cierra exacta) sobreviven como *sugerencias* de colocación.
+Y los huecos para paneles son los ciclos simples del grafo, filtrados por
+planitud con la normal de Newell — un octaedro tiene 15 ciclos de 4, pero
+solo 3 son cuadrados de verdad.
+
+La vista ([src/main.js](src/main.js)) nunca es la fuente de verdad: diff
+modelo→meshes tras cada mutación, y cada frame copia posiciones (las bolas
+se mueven: el solver manda).
 
 ## Ideas para seguir
 
-- modo gravedad: pasar el grafo a un motor de físicas y ver si tu torre aguanta
-- paneles (los cuadrados y triángulos transparentes que rigidizaban)
+- arrastrar bolas con el ratón (agitar la estructura, puro juguete)
+- modo caja limitada: empiezas con las piezas contadas, como en la realidad
 - compartir estructuras por URL (el JSON comprimido en el hash)
-- contador de piezas por color, como cuando se te acababan las barras azules
+- galería de construcciones guardadas con miniaturas

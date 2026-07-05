@@ -31,21 +31,11 @@
     #title h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.12em; }
     #title h1 span { color: var(--dim); font-weight: 400; }
     #count { color: var(--dim); margin-top: 2px; }
-    #help { bottom: 14px; left: 14px; color: var(--dim); }
+    #help { bottom: 14px; left: 14px; color: var(--dim); max-width: 340px; }
+    #help summary { cursor: pointer; color: var(--fg); }
     #help b { color: var(--fg); font-weight: 500; }
-    #tools { top: 14px; right: 14px; display: flex; flex-direction: column; gap: 10px; }
-    #swatches { display: flex; gap: 8px; }
-    .swatch {
-      width: 26px; height: 26px;
-      border-radius: 50%;
-      border: 2px solid transparent;
-      cursor: pointer;
-      transition: transform 0.1s;
-    }
-    .swatch:hover { transform: scale(1.15); }
-    .swatch.active { border-color: var(--fg); }
-    #buttons { display: flex; flex-direction: column; gap: 6px; }
-    #buttons button {
+    #tools { top: 14px; right: 14px; display: flex; flex-direction: column; gap: 6px; }
+    #tools button {
       font: inherit;
       color: var(--fg);
       background: rgba(255, 255, 255, 0.06);
@@ -55,7 +45,70 @@
       cursor: pointer;
       text-align: left;
     }
-    #buttons button:hover { background: rgba(255, 255, 255, 0.12); }
+    #tools button:hover { background: rgba(255, 255, 255, 0.12); }
+    #tools button.on { border-color: #4ade80; color: #4ade80; }
+
+    /* la bandeja: la caja de piezas */
+    #tray {
+      bottom: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 18px;
+      align-items: flex-end;
+    }
+    .tray-group { display: flex; flex-direction: column; gap: 6px; }
+    .tray-group label {
+      color: var(--dim);
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+    .tray-row { display: flex; gap: 8px; }
+    .piece {
+      position: relative;
+      width: 44px;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255, 255, 255, 0.04);
+      border: 2px solid transparent;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: transform 0.1s;
+    }
+    .piece:hover { transform: translateY(-3px); }
+    .piece.active { border-color: var(--fg); background: rgba(255, 255, 255, 0.1); }
+    .piece .rodicon {
+      display: block;
+      width: 28px;
+      height: 9px;
+      border-radius: 5px;
+    }
+    .piece svg { width: 24px; height: 24px; opacity: 0.9; }
+    .piece .n {
+      position: absolute;
+      right: 3px;
+      bottom: 1px;
+      font-size: 9px;
+      color: var(--dim);
+    }
+
+    #toast {
+      position: fixed;
+      bottom: 84px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 8px 14px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      opacity: 0;
+      transition: opacity 0.25s;
+      pointer-events: none;
+    }
+    #toast.show { opacity: 1; }
   </style>
   <script type="importmap">
     {
@@ -75,21 +128,37 @@
   </div>
 
   <div id="tools" class="panel">
-    <div id="swatches"></div>
-    <div id="buttons">
-      <button id="undo">deshacer ⌘Z</button>
-      <button id="reset">empezar de cero</button>
-      <button id="export">exportar .json</button>
-      <button id="import">importar .json</button>
-    </div>
+    <button id="gravity">gravedad: no</button>
+    <button id="undo">deshacer ⌘Z</button>
+    <button id="reset">empezar de cero</button>
+    <button id="export">exportar .json</button>
+    <button id="import">importar .json</button>
     <input id="file" type="file" accept=".json" hidden />
   </div>
 
-  <div id="help" class="panel">
-    <b>clic</b> en una bola: seleccionar · <b>clic</b> en un fantasma: añadir barra<br />
-    <b>clic derecho</b>: borrar bola o barra · <b>1–4</b>: color · <b>esc</b>: soltar<br />
-    <b>arrastrar</b>: orbitar · <b>rueda</b>: zoom · <b>arrastrar dcho</b>: desplazar
+  <div id="tray" class="panel">
+    <div class="tray-group">
+      <label>barras</label>
+      <div class="tray-row" id="rod-tray"></div>
+    </div>
+    <div class="tray-group">
+      <label>paneles</label>
+      <div class="tray-row" id="panel-tray"></div>
+    </div>
   </div>
+
+  <div id="toast"></div>
+
+  <details id="help" class="panel">
+    <summary>¿cómo se juega?</summary>
+    <b>clic</b> en una bola: seleccionar · <b>clic</b> en un fantasma: barra nueva
+    (los verdes enganchan con una bola que ya existe)<br />
+    elige un <b>panel</b> en la bandeja y clica un hueco que le valga —
+    el panel fuerza la forma: 5 barras + panel rojo = pentágono<br />
+    <b>clic derecho</b>: borrar bola, barra o panel · <b>1–8</b>: elegir pieza ·
+    <b>esc</b>: soltar · <b>⌘Z</b>: deshacer<br />
+    <b>gravedad</b>: suelta tu criatura al mundo, a ver si aguanta
+  </details>
 
   <script type="module" src="src/main.js"></script>
 </body>
