@@ -32,6 +32,7 @@ let gravityOn = false;
 let selected = null; // id de la bola seleccionada, o null
 let mode = { kind: 'rod', color: 'amarillo' }; // o { kind: 'panel', type }
 let dirMode = 'diagonales'; // qué juego de ejes sugieren los fantasmas
+let orientMode = 'global'; // cómo se orienta ese juego de ejes: global, vista o local
 
 // ---------------------------------------------------------------- escena
 
@@ -245,12 +246,70 @@ const previewRod = new THREE.Mesh(rodGeo, previewMat);
 previewRod.visible = false;
 scene.add(previewRod);
 
+// El marco que orienta el juego de ejes de sugerencia. En global son los
+// ejes del mundo tal cual; en vista, los de la cámara (derecha/arriba/
+// adelante); en local, el esqueleto de barras que ya salen de la bola —
+// así, sobre una estructura ya relajada donde la red original se ha
+// deformado, los fantasmas siguen ofreciendo lo que de verdad encaja ahí.
+function orientFrame(ballId) {
+  if (orientMode === 'global') return new THREE.Quaternion();
+  if (orientMode === 'vista') return camera.quaternion.clone();
+
+  const from = new THREE.Vector3(...structure.balls.get(ballId));
+  const dirs = [];
+  for (const rk of structure.rods.keys()) {
+    const [a, b] = rodEnds(rk);
+    if (a !== ballId && b !== ballId) continue;
+    const other = a === ballId ? b : a;
+    const v = new THREE.Vector3(...structure.balls.get(other)).sub(from);
+    if (v.lengthSq() > 1e-9) dirs.push(v.normalize());
+  }
+  if (dirs.length === 0) return new THREE.Quaternion();
+
+  const steps = DIRECTION_MODES[dirMode].map((s) => new THREE.Vector3(...s).normalize());
+  const r1 = dirs[0];
+  let i1 = 0, best = -Infinity;
+  steps.forEach((s, i) => {
+    const d = s.dot(r1);
+    if (d > best) { best = d; i1 = i; }
+  });
+  const q1 = new THREE.Quaternion().setFromUnitVectors(steps[i1], r1);
+  if (dirs.length < 2) return q1;
+
+  // segunda barra: busca el paso (distinto del primero) que más se le
+  // parece, y el "twist" alrededor de r1 que mejor alinea ambos.
+  const r2 = dirs[1];
+  let i2 = -1;
+  best = -Infinity;
+  steps.forEach((s, i) => {
+    if (i === i1) return;
+    const d = s.dot(r2);
+    if (d > best) { best = d; i2 = i; }
+  });
+  if (i2 === -1) return q1;
+  const s2 = steps[i2].clone().applyQuaternion(q1);
+  const onPlane = (v) => v.clone().addScaledVector(r1, -v.dot(r1));
+  const ps2 = onPlane(s2);
+  const pr2 = onPlane(r2);
+  if (ps2.lengthSq() < 1e-9 || pr2.lengthSq() < 1e-9) return q1;
+  ps2.normalize();
+  pr2.normalize();
+  let angle = Math.acos(THREE.MathUtils.clamp(ps2.dot(pr2), -1, 1));
+  if (new THREE.Vector3().crossVectors(ps2, pr2).dot(r1) < 0) angle = -angle;
+  const twist = new THREE.Quaternion().setFromAxisAngle(r1, angle);
+  return twist.multiply(q1);
+}
+
 function refreshGhosts() {
   ghosts.clear();
   previewRod.visible = false;
   marker.visible = Boolean(selected);
   if (!selected) return;
-  for (const cand of structure.candidates(selected, DIRECTION_MODES[dirMode])) {
+  const q = orientFrame(selected);
+  const steps = DIRECTION_MODES[dirMode].map((s) =>
+    new THREE.Vector3(...s).applyQuaternion(q).toArray()
+  );
+  for (const cand of structure.candidates(selected, steps)) {
     const link = cand.kind === 'link';
     const mesh = new THREE.Mesh(ballGeo, link ? ghostLinkMat : ghostMat);
     mesh.scale.setScalar(link ? 1.3 : 0.8);
@@ -296,7 +355,10 @@ function updateTransforms() {
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 let hovered = null;
-let downAt = null;
+let downAt = null; // { x, y } al pulsar: si el puntero no se mueve, es un clic
+let downBallId = null; // bola bajo el puntero al pulsar, candidata a arrastre
+let dragging = null; // arrastre en curso, o null
+let ghostsDirty = false; // en modo vista, la cámara mueve los fantasmas: una vez por frame
 
 function pick(event) {
   const rect = renderer.domElement.getBoundingClientRect();
@@ -341,6 +403,91 @@ function setHover(mesh) {
   document.body.style.cursor = mesh ? 'pointer' : 'default';
 }
 
+// --------------------------------------------------------- arrastrar bolas
+
+// Punto de la recta (origin + t·dir) más cercano a una recta-rayo: la
+// fórmula clásica del punto más próximo entre dos rectas que se cruzan
+// en el espacio. Con ambas direcciones normalizadas se simplifica bastante.
+function closestPointOnLine(origin, dir, ray, out) {
+  const r = vDelta.subVectors(ray.origin, origin);
+  const b = ray.direction.dot(dir);
+  const dr1 = ray.direction.dot(r);
+  const dr2 = dir.dot(r);
+  const denom = b * b - 1;
+  const s = Math.abs(denom) < 1e-6 ? 0 : (b * dr1 - dr2) / denom;
+  out.copy(dir).multiplyScalar(s).add(origin);
+}
+const vDelta = new THREE.Vector3(); // vector reutilizable, para no crear basura cada frame
+const dragHit = new THREE.Vector3();
+
+function startDrag(id, e) {
+  setHover(null);
+  dragging = {
+    id,
+    axis: null, // null, 'x', 'y' o 'z': eje al que queda restringido el movimiento
+    axisDir: new THREE.Vector3(),
+    startPos: new THREE.Vector3(...structure.balls.get(id)),
+    plane: new THREE.Plane(),
+    target: new THREE.Vector3(...structure.balls.get(id)),
+  };
+  structure.snapshot(); // una sola instantánea: ⌘Z deshace el arrastre entero
+  select(id);
+  controls.enabled = false;
+  renderer.domElement.setPointerCapture(e.pointerId);
+  document.body.style.cursor = 'grabbing';
+  // el plano de arrastre pasa por la bola y mira a la cámara (plano de pantalla)
+  const normal = new THREE.Vector3();
+  camera.getWorldDirection(normal);
+  dragging.plane.setFromNormalAndCoplanarPoint(normal, dragging.startPos);
+  updateDragTarget(e);
+}
+
+function updateDragTarget(e) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.set(
+    ((e.clientX - rect.left) / rect.width) * 2 - 1,
+    -((e.clientY - rect.top) / rect.height) * 2 + 1
+  );
+  raycaster.setFromCamera(pointer, camera);
+  if (dragging.axis) {
+    closestPointOnLine(dragging.startPos, dragging.axisDir, raycaster.ray, dragHit);
+    dragging.target.copy(dragHit);
+  } else if (raycaster.ray.intersectPlane(dragging.plane, dragHit)) {
+    dragging.target.copy(dragHit);
+  }
+}
+
+const AXIS_VECTORS = {
+  x: new THREE.Vector3(1, 0, 0),
+  y: new THREE.Vector3(0, 1, 0),
+  z: new THREE.Vector3(0, 0, 1),
+};
+
+function setAxisLock(axis) {
+  if (!dragging) return;
+  if (dragging.axis === axis) {
+    dragging.axis = null;
+    toast('eje libre');
+    return;
+  }
+  const q = orientFrame(dragging.id);
+  dragging.axisDir.copy(AXIS_VECTORS[axis]).applyQuaternion(q).normalize();
+  dragging.axis = axis;
+  toast(`eje ${axis.toUpperCase()}`);
+}
+
+function endDrag(e) {
+  renderer.domElement.releasePointerCapture(e.pointerId);
+  controls.enabled = true;
+  dragging = null;
+  downAt = null;
+  downBallId = null; // si no, el siguiente movimiento re-agarraría la bola
+  document.body.style.cursor = 'default';
+  gravity.forget();
+  settle();
+  sync();
+}
+
 function settle() {
   if (!gravityOn) relax(structure, 80);
 }
@@ -357,14 +504,31 @@ function placePanel(cycle, type) {
   sync();
 }
 
-renderer.domElement.addEventListener('pointermove', (e) => setHover(pick(e)));
+renderer.domElement.addEventListener('pointermove', (e) => {
+  if (dragging) {
+    updateDragTarget(e);
+    return;
+  }
+  if (downBallId && Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 6) {
+    startDrag(downBallId, e);
+    return;
+  }
+  setHover(pick(e));
+});
 renderer.domElement.addEventListener('pointerdown', (e) => {
   downAt = { x: e.clientX, y: e.clientY };
+  const mesh = e.button === 0 ? pick(e) : null;
+  downBallId = mesh?.userData.kind === 'ball' ? mesh.userData.id : null;
 });
 renderer.domElement.addEventListener('pointerup', (e) => {
+  if (dragging) {
+    endDrag(e);
+    return;
+  }
   const wasClick =
     downAt && Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) < 6;
   downAt = null;
+  downBallId = null;
   if (!wasClick) return;
   const mesh = pick(e);
   setHover(null);
@@ -398,6 +562,9 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   }
 });
 renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
+renderer.domElement.addEventListener('pointercancel', (e) => {
+  if (dragging) endDrag(e);
+});
 
 addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
@@ -410,6 +577,8 @@ addEventListener('keydown', (e) => {
     setMode({ kind: 'rod', color: mode.color ?? 'amarillo' });
   }
   if (e.key === 'e') cycleAxes();
+  if (e.key === 'o') cycleOrient();
+  if (dragging && /^[xyz]$/i.test(e.key)) setAxisLock(e.key.toLowerCase());
   const rods = Object.keys(ROD_COLORS);
   const panels = Object.keys(PANEL_TYPES);
   const n = Number(e.key);
@@ -433,6 +602,7 @@ const hud = {
   toast: document.getElementById('toast'),
   gravity: document.getElementById('gravity'),
   axes: document.getElementById('axes'),
+  orient: document.getElementById('orient'),
 };
 
 function cycleAxes() {
@@ -442,6 +612,19 @@ function cycleAxes() {
   refreshGhosts();
 }
 hud.axes.addEventListener('click', cycleAxes);
+
+const ORIENT_MODES = ['global', 'vista', 'local'];
+function cycleOrient() {
+  orientMode = ORIENT_MODES[(ORIENT_MODES.indexOf(orientMode) + 1) % ORIENT_MODES.length];
+  hud.orient.textContent = `orientación: ${orientMode}`;
+  refreshGhosts();
+}
+hud.orient.addEventListener('click', cycleOrient);
+// en modo vista los fantasmas siguen a la cámara: un flag basta, que el
+// bucle de animación consuma como mucho una vez por frame
+controls.addEventListener('change', () => {
+  if (orientMode === 'vista' && selected) ghostsDirty = true;
+});
 
 const PANEL_SHAPES = {
   triangulo: '<polygon points="12,3 22,21 2,21"/>',
@@ -570,7 +753,20 @@ addEventListener('resize', () => {
 
 sync();
 renderer.setAnimationLoop(() => {
-  if (gravityOn) gravity.step(structure);
+  if (dragging) {
+    // la bola arrastrada queda clavada en su posición objetivo; el solver
+    // reparte el estirón entre el resto de la estructura, no en ella
+    const pinned = new Set([dragging.id]);
+    dragging.target.toArray(structure.balls.get(dragging.id));
+    if (gravityOn) gravity.step(structure, 1 / 60, pinned);
+    else relax(structure, 30, pinned);
+  } else if (gravityOn) {
+    gravity.step(structure);
+  }
+  if (ghostsDirty) {
+    refreshGhosts();
+    ghostsDirty = false;
+  }
   updateTransforms();
   controls.update();
   renderer.render(scene, camera);
