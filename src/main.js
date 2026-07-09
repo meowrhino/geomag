@@ -7,10 +7,13 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { Structure, PANEL_TYPES, DIRECTION_MODES, rodEnds } from './structure.js';
-import { relax, residual, Gravity } from './solver.js';
+import { relax, residual, Gravity, clampFloor } from './solver.js';
 
 const BALL_R = 0.22;
 const ROD_R = 0.06;
+// El suelo vive en el centro de bola y=0 — coherente con el p[1]<0 que ya
+// usaba la gravedad, y con la rejilla, que está pintada en y=-BALL_R.
+const FLOOR_Y = 0;
 
 const ROD_COLORS = {
   amarillo: 0xffc93c,
@@ -29,6 +32,7 @@ const PANEL_COLORS = {
 const structure = new Structure();
 const gravity = new Gravity();
 let gravityOn = false;
+let floorOn = true; // la mesa invisible en y=0: se puede apagar para construir al vacío
 let selected = null; // id de la bola seleccionada, o null
 let mode = { kind: 'rod', color: 'amarillo' }; // o { kind: 'panel', type }
 let dirMode = 'diagonales'; // qué juego de ejes sugieren los fantasmas
@@ -52,13 +56,53 @@ scene.environment = new THREE.PMREMGenerator(renderer).fromScene(
   0.04
 ).texture;
 
-const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100);
-camera.position.set(4.5, 3.5, 7);
+// Dos cámaras que comparten posición y objetivo: la perspectiva es la que
+// usamos para construir (da profundidad, como mirar la mesa de verdad); la
+// ortográfica sirve para alinear piezas sin la fuga, como un plano técnico.
+// `activeCamera` es la que de verdad se usa en cada sitio — render,
+// picking, arrastre —; la otra queda sincronizada para cuando el usuario
+// alterne entre ellas.
+const perspCamera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 100);
+perspCamera.position.set(4.5, 3.5, 7);
 
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 0.8, 0);
-controls.enableDamping = true;
-controls.maxDistance = 30;
+const orthoCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
+orthoCamera.position.copy(perspCamera.position);
+
+let activeCamera = perspCamera;
+let projection = 'perspectiva'; // o 'ortográfica'
+
+// El frustum de la ortográfica se recalcula a partir de la distancia
+// cámara→objetivo y el fov vertical de la perspectiva, para que el
+// encuadre no dé un salto al alternar entre las dos.
+function syncOrthoFrustum(dist) {
+  const aspect = innerWidth / innerHeight;
+  const halfH = dist * Math.tan(THREE.MathUtils.degToRad(perspCamera.fov / 2));
+  const halfW = halfH * aspect;
+  orthoCamera.left = -halfW;
+  orthoCamera.right = halfW;
+  orthoCamera.top = halfH;
+  orthoCamera.bottom = -halfH;
+  orthoCamera.updateProjectionMatrix();
+}
+
+// OrbitControls no admite cambiar de cámara sobre la marcha: al alternar
+// proyección los tiramos y creamos otros nuevos sobre la cámara activa,
+// con el mismo objetivo. Encapsulado aquí para no duplicar su configuración.
+function makeControls(cam, target) {
+  const c = new OrbitControls(cam, renderer.domElement);
+  c.target.copy(target);
+  c.enableDamping = true;
+  c.maxDistance = 30;
+  // en modo vista los fantasmas siguen a la cámara: un flag basta, que el
+  // bucle de animación consuma como mucho una vez por frame
+  c.addEventListener('change', () => {
+    if (orientMode === 'vista' && selected) ghostsDirty = true;
+  });
+  return c;
+}
+
+let controls = makeControls(perspCamera, new THREE.Vector3(0, 0.8, 0));
+syncOrthoFrustum(perspCamera.position.distanceTo(controls.target));
 
 scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x3a3226, 0.6));
 const sun = new THREE.DirectionalLight(0xffffff, 1.8);
@@ -253,7 +297,7 @@ scene.add(previewRod);
 // deformado, los fantasmas siguen ofreciendo lo que de verdad encaja ahí.
 function orientFrame(ballId) {
   if (orientMode === 'global') return new THREE.Quaternion();
-  if (orientMode === 'vista') return camera.quaternion.clone();
+  if (orientMode === 'vista') return activeCamera.quaternion.clone();
 
   const from = new THREE.Vector3(...structure.balls.get(ballId));
   const dirs = [];
@@ -366,7 +410,7 @@ function pick(event) {
     ((event.clientX - rect.left) / rect.width) * 2 - 1,
     -((event.clientY - rect.top) / rect.height) * 2 + 1
   );
-  raycaster.setFromCamera(pointer, camera);
+  raycaster.setFromCamera(pointer, activeCamera);
   const hit = raycaster.intersectObjects([
     ...ghosts.children,
     ...candidates.children,
@@ -437,7 +481,7 @@ function startDrag(id, e) {
   document.body.style.cursor = 'grabbing';
   // el plano de arrastre pasa por la bola y mira a la cámara (plano de pantalla)
   const normal = new THREE.Vector3();
-  camera.getWorldDirection(normal);
+  activeCamera.getWorldDirection(normal);
   dragging.plane.setFromNormalAndCoplanarPoint(normal, dragging.startPos);
   updateDragTarget(e);
 }
@@ -448,13 +492,15 @@ function updateDragTarget(e) {
     ((e.clientX - rect.left) / rect.width) * 2 - 1,
     -((e.clientY - rect.top) / rect.height) * 2 + 1
   );
-  raycaster.setFromCamera(pointer, camera);
+  raycaster.setFromCamera(pointer, activeCamera);
   if (dragging.axis) {
     closestPointOnLine(dragging.startPos, dragging.axisDir, raycaster.ray, dragHit);
     dragging.target.copy(dragHit);
   } else if (raycaster.ray.intersectPlane(dragging.plane, dragHit)) {
     dragging.target.copy(dragHit);
   }
+  // no se puede arrastrar una bola bajo la mesa: el suelo también manda aquí
+  if (floorOn) dragging.target.y = Math.max(dragging.target.y, FLOOR_Y);
 }
 
 const AXIS_VECTORS = {
@@ -489,7 +535,7 @@ function endDrag(e) {
 }
 
 function settle() {
-  if (!gravityOn) relax(structure, 80);
+  if (!gravityOn) relax(structure, 80, undefined, floorOn ? FLOOR_Y : null);
 }
 
 function placePanel(cycle, type) {
@@ -567,7 +613,10 @@ renderer.domElement.addEventListener('pointercancel', (e) => {
 });
 
 addEventListener('keydown', (e) => {
-  if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
+  // Deshacer: miramos la tecla física (e.code === 'KeyZ') además de e.key,
+  // porque según la distribución del teclado o si hay mayúsculas de por
+  // medio, e.key puede no ser exactamente 'z' y el atajo se escapaba.
+  if ((e.metaKey || e.ctrlKey) && (e.code === 'KeyZ' || e.key === 'z' || e.key === 'Z')) {
     e.preventDefault();
     undo();
     return;
@@ -578,6 +627,7 @@ addEventListener('keydown', (e) => {
   }
   if (e.key === 'e') cycleAxes();
   if (e.key === 'o') cycleOrient();
+  if (e.key === 'f') frameTarget();
   if (dragging && /^[xyz]$/i.test(e.key)) setAxisLock(e.key.toLowerCase());
   const rods = Object.keys(ROD_COLORS);
   const panels = Object.keys(PANEL_TYPES);
@@ -601,6 +651,9 @@ const hud = {
   panelTray: document.getElementById('panel-tray'),
   toast: document.getElementById('toast'),
   gravity: document.getElementById('gravity'),
+  floor: document.getElementById('floor'),
+  projection: document.getElementById('projection'),
+  frame: document.getElementById('frame'),
   axes: document.getElementById('axes'),
   orient: document.getElementById('orient'),
 };
@@ -620,11 +673,6 @@ function cycleOrient() {
   refreshGhosts();
 }
 hud.orient.addEventListener('click', cycleOrient);
-// en modo vista los fantasmas siguen a la cámara: un flag basta, que el
-// bucle de animación consuma como mucho una vez por frame
-controls.addEventListener('change', () => {
-  if (orientMode === 'vista' && selected) ghostsDirty = true;
-});
 
 const PANEL_SHAPES = {
   triangulo: '<polygon points="12,3 22,21 2,21"/>',
@@ -693,10 +741,98 @@ hud.gravity.addEventListener('click', () => {
   hud.gravity.textContent = `gravedad: ${gravityOn ? 'sí' : 'no'}`;
   hud.gravity.classList.toggle('on', gravityOn);
   if (!gravityOn) {
-    relax(structure, 60);
+    relax(structure, 60, undefined, floorOn ? FLOOR_Y : null);
     localStorage.setItem('geomag-autosave', JSON.stringify(structure.toJSON()));
   }
 });
+
+// El suelo es independiente de la gravedad: una mesa de verdad, no un
+// campo de fuerzas. Apagarla dejar caer piezas al vacío bajo gravedad, o
+// permite arrastrar/construir por debajo de y=0 sin gravedad de por medio.
+hud.floor.addEventListener('click', () => {
+  floorOn = !floorOn;
+  gravity.forget();
+  hud.floor.textContent = `suelo: ${floorOn ? 'sí' : 'no'}`;
+  hud.floor.classList.toggle('on', floorOn);
+  settle();
+  sync();
+});
+hud.floor.classList.toggle('on', floorOn);
+
+// ------------------------------------------------------------ cámara: Blender-style
+
+hud.projection.addEventListener('click', toggleProjection);
+
+function toggleProjection() {
+  const target = controls.target.clone();
+  const dist = activeCamera.position.distanceTo(target) || 6;
+  if (activeCamera === perspCamera) {
+    orthoCamera.position.copy(perspCamera.position);
+    orthoCamera.quaternion.copy(perspCamera.quaternion);
+    orthoCamera.up.copy(perspCamera.up);
+    syncOrthoFrustum(dist);
+    activeCamera = orthoCamera;
+    projection = 'ortográfica';
+  } else {
+    perspCamera.position.copy(orthoCamera.position);
+    perspCamera.quaternion.copy(orthoCamera.quaternion);
+    perspCamera.up.copy(orthoCamera.up);
+    activeCamera = perspCamera;
+    projection = 'perspectiva';
+  }
+  controls.dispose();
+  controls = makeControls(activeCamera, target);
+  window.geomag.camera = activeCamera;
+  hud.projection.textContent = `proyección: ${projection}`;
+}
+
+hud.frame.addEventListener('click', frameTarget);
+
+// Recentra el pivote de la órbita: en la bola seleccionada, o si no hay
+// ninguna, en el centro de todo lo construido — como el "frame selected/all"
+// de Blender. La distancia a la cámara se conserva salvo en "frame all",
+// donde se retrocede lo justo para que quepa la caja entera.
+function frameTarget() {
+  const dir = new THREE.Vector3().subVectors(activeCamera.position, controls.target);
+  let dist = dir.length() || 6;
+  if (dir.lengthSq() < 1e-9) dir.set(0.4, 0.3, 1);
+  dir.normalize();
+
+  const target = new THREE.Vector3();
+  if (selected) {
+    target.set(...structure.balls.get(selected));
+  } else {
+    const box = new THREE.Box3();
+    for (const p of structure.balls.values()) box.expandByPoint(new THREE.Vector3(...p));
+    box.getCenter(target);
+    dist = Math.max(box.getSize(new THREE.Vector3()).length() * 1.2, 4);
+  }
+  controls.target.copy(target);
+  activeCamera.position.copy(target).addScaledVector(dir, dist);
+  if (activeCamera === orthoCamera) syncOrthoFrustum(dist);
+  controls.update();
+}
+
+// Vistas rápidas: reubican la cámara sobre un eje mirando al objetivo
+// actual, conservando la distancia — sin tocar teclas, para no chocar con
+// las de piezas/ejes.
+const QUICK_VIEW_DIRS = {
+  frente: new THREE.Vector3(0, 0, -1), // mira por -Z hacia +Z
+  lado: new THREE.Vector3(1, 0, 0), // se asoma por +X
+  arriba: new THREE.Vector3(0, 1, 0), // cae en picado por +Y
+};
+function setQuickView(name) {
+  const dist = activeCamera.position.distanceTo(controls.target) || 6;
+  // en vista cenital el "arriba" de la cámara mira hacia -Z; en las demás, +Y
+  activeCamera.up.set(0, name === 'arriba' ? 0 : 1, name === 'arriba' ? -1 : 0);
+  activeCamera.position.copy(controls.target).addScaledVector(QUICK_VIEW_DIRS[name], dist);
+  activeCamera.lookAt(controls.target);
+  if (activeCamera === orthoCamera) syncOrthoFrustum(dist);
+  controls.update();
+}
+document.getElementById('view-front').addEventListener('click', () => setQuickView('frente'));
+document.getElementById('view-side').addEventListener('click', () => setQuickView('lado'));
+document.getElementById('view-top').addEventListener('click', () => setQuickView('arriba'));
 
 document.getElementById('undo').addEventListener('click', undo);
 document.getElementById('reset').addEventListener('click', () => {
@@ -727,6 +863,7 @@ fileInput.addEventListener('change', async () => {
     structure.load(JSON.parse(await file.text()));
     gravity.forget();
     select(null);
+    if (floorOn) clampFloor(structure, undefined, FLOOR_Y); // snap inmediato antes de relajar
     settle();
     sync();
   } catch {
@@ -741,13 +878,15 @@ try {
   const saved = localStorage.getItem('geomag-autosave');
   if (saved) {
     structure.restore(JSON.parse(saved));
-    relax(structure, 60);
+    if (floorOn) clampFloor(structure, undefined, FLOOR_Y); // snap inmediato antes de relajar
+    relax(structure, 60, undefined, floorOn ? FLOOR_Y : null);
   }
 } catch { /* autosave corrupto: empezamos de cero */ }
 
 addEventListener('resize', () => {
-  camera.aspect = innerWidth / innerHeight;
-  camera.updateProjectionMatrix();
+  perspCamera.aspect = innerWidth / innerHeight;
+  perspCamera.updateProjectionMatrix();
+  syncOrthoFrustum(orthoCamera.position.distanceTo(controls.target));
   renderer.setSize(innerWidth, innerHeight);
 });
 
@@ -758,10 +897,11 @@ renderer.setAnimationLoop(() => {
     // reparte el estirón entre el resto de la estructura, no en ella
     const pinned = new Set([dragging.id]);
     dragging.target.toArray(structure.balls.get(dragging.id));
-    if (gravityOn) gravity.step(structure, 1 / 60, pinned);
-    else relax(structure, 30, pinned);
+    const floorY = floorOn ? FLOOR_Y : null;
+    if (gravityOn) gravity.step(structure, 1 / 60, pinned, floorY);
+    else relax(structure, 30, pinned, floorY);
   } else if (gravityOn) {
-    gravity.step(structure);
+    gravity.step(structure, 1 / 60, undefined, floorOn ? FLOOR_Y : null);
   }
   if (ghostsDirty) {
     refreshGhosts();
@@ -769,8 +909,9 @@ renderer.setAnimationLoop(() => {
   }
   updateTransforms();
   controls.update();
-  renderer.render(scene, camera);
+  renderer.render(scene, activeCamera);
 });
 
-// Para trastear desde la consola.
-window.geomag = { structure, sync, select, setMode, placePanel, relax, residual, camera, scene, renderer };
+// Para trastear desde la consola. `camera` apunta a la cámara activa;
+// toggleProjection lo reasigna al alternar perspectiva/ortográfica.
+window.geomag = { structure, sync, select, setMode, placePanel, relax, residual, camera: activeCamera, scene, renderer };

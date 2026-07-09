@@ -131,6 +131,14 @@
     <button id="axes">ejes: diagonales</button>
     <button id="orient">orientación: global</button>
     <button id="gravity">gravedad: no</button>
+    <button id="floor">suelo: sí</button>
+    <button id="projection">proyección: perspectiva</button>
+    <button id="frame">centrar (F)</button>
+    <div class="tray-row">
+      <button id="view-front">frente</button>
+      <button id="view-side">lado</button>
+      <button id="view-top">arriba</button>
+    </div>
     <button id="undo">deshacer ⌘Z</button>
     <button id="reset">empezar de cero</button>
     <button id="export">exportar .json</button>
@@ -164,7 +172,12 @@
     <b>arrastra</b> una bola para moverla — con <b>X</b>/<b>Y</b>/<b>Z</b> bloqueas
     el eje de arrastre (repite la tecla para soltarlo)<br />
     <b>o</b>: orientación de las sugerencias — global, vista o local<br />
-    <b>gravedad</b>: suelta tu criatura al mundo, a ver si aguanta
+    <b>gravedad</b>: suelta tu criatura al mundo, a ver si aguanta ·
+    <b>suelo</b>: una mesa invisible en y=0 — apágala si quieres construir
+    hacia el vacío<br />
+    <b>f</b>: centrar la cámara en la bola seleccionada (o en todo, si no
+    hay ninguna) · <b>proyección</b>: perspectiva u ortográfica, como en
+    Blender
   </details>
 
   <script type="module" src="src/main.js"></script>

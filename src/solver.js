@@ -27,8 +27,23 @@ export function satisfy(structure, pinned) {
   }
 }
 
-export function relax(structure, iterations = 100, pinned) {
-  for (let i = 0; i < iterations; i++) satisfy(structure, pinned);
+// El suelo como restricción de verdad: empuja hacia arriba lo que caería
+// por debajo de `floorY`, con o sin gravedad de por medio — una mesa no
+// necesita que nada tire de las cosas para negarse a dejarlas pasar. Una
+// bola sujeta con la mano (pinned) lo ignora, igual que ignora cualquier
+// otra corrección: la mano manda.
+export function clampFloor(structure, pinned, floorY) {
+  for (const [id, p] of structure.balls) {
+    if (pinned?.has(id)) continue;
+    if (p[1] < floorY) p[1] = floorY;
+  }
+}
+
+export function relax(structure, iterations = 100, pinned, floorY = null) {
+  for (let i = 0; i < iterations; i++) {
+    satisfy(structure, pinned);
+    if (floorY !== null) clampFloor(structure, pinned, floorY);
+  }
 }
 
 // Peor violación relativa: si tras relajar sigue alta, la pieza no encaja.
@@ -55,8 +70,10 @@ export class Gravity {
   // Con `pinned`, la bola fijada no se integra — ni gravedad ni inercia —
   // y su `prev` se sincroniza a su posición actual, así que al soltarla
   // no sale disparada por una velocidad implícita que nunca quiso tener
-  // (mientras la arrastras con el ratón, por ejemplo).
-  step(structure, dt = 1 / 60, pinned) {
+  // (mientras la arrastras con el ratón, por ejemplo). `floorY` es el
+  // nivel del suelo, o null si el interruptor de suelo está apagado: sin
+  // mesa, la gravedad no frena nada y todo cae al vacío.
+  step(structure, dt = 1 / 60, pinned, floorY = 0) {
     const g = 14;
     for (const [id, p] of structure.balls) {
       if (pinned?.has(id)) {
@@ -71,15 +88,15 @@ export class Gravity {
     }
     for (let i = 0; i < 20; i++) {
       satisfy(structure, pinned);
-      this.floor(structure, pinned);
+      if (floorY !== null) this.floor(structure, pinned, floorY);
     }
   }
 
-  floor(structure, pinned) {
+  floor(structure, pinned, floorY = 0) {
     for (const [id, p] of structure.balls) {
       if (pinned?.has(id)) continue; // clavada por la mano: el suelo no la toca
-      if (p[1] < 0) {
-        p[1] = 0;
+      if (p[1] < floorY) {
+        p[1] = floorY;
         const q = this.prev.get(id);
         if (q) {
           // el rebote muere y el deslizamiento se frena (fricción)
