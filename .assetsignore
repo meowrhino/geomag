@@ -1,0 +1,11 @@
+.git
+.git/**
+.wrangler
+.wrangler/**
+.claude
+.claude/**
+.gitignore
+.assetsignore
+wrangler.jsonc
+README.md
+CNAME

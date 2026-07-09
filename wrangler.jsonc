@@ -1,0 +1,14 @@
+{
+  // Sirve el taller como Worker de assets estáticos (sin script de servidor):
+  // index.html y src/ se suben tal cual y Cloudflare los reparte desde el edge.
+  // La ruta con custom_domain crea sola el registro DNS y el certificado de
+  // geomag.meowrhino.studio — siempre que la zona viva en esta misma cuenta.
+  "name": "geomag",
+  "compatibility_date": "2026-07-01",
+  "assets": {
+    "directory": "./"
+  },
+  "routes": [
+    { "pattern": "geomag.meowrhino.studio", "custom_domain": true }
+  ]
+}
