@@ -95,6 +95,47 @@
       color: var(--dim);
     }
 
+    .piece.out { opacity: 0.35; } /* pieza agotada en la caja contada */
+
+    /* la galería: un panel centrado con tarjetas */
+    #gallery {
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: min(680px, 92vw);
+      max-height: 80vh;
+      overflow: auto;
+      z-index: 10;
+    }
+    #gallery-head {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      justify-content: space-between;
+    }
+    #gallery button {
+      font: inherit;
+      color: var(--fg);
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 4px 9px;
+      cursor: pointer;
+    }
+    #gallery button:hover { background: rgba(255, 255, 255, 0.12); }
+    #gallery-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .gcard { border: 1px solid var(--line); border-radius: 8px; padding: 6px; }
+    .gcard img { width: 100%; border-radius: 5px; display: block; background: #0a0c11; }
+    .gname { margin-top: 5px; }
+    .gdate { color: var(--dim); font-size: 10px; }
+    .gbtns { display: flex; gap: 6px; margin-top: 6px; }
+    .gempty { color: var(--dim); grid-column: 1 / -1; }
+
     #toast {
       position: fixed;
       bottom: 84px;
@@ -132,6 +173,8 @@
     <button id="orient">orientación: global</button>
     <button id="gravity">gravedad: no</button>
     <button id="floor">suelo: sí</button>
+    <button id="tension">tensión: no</button>
+    <button id="box">caja: infinita</button>
     <button id="projection">proyección: perspectiva</button>
     <button id="frame">centrar (F)</button>
     <div class="tray-row">
@@ -143,6 +186,7 @@
     <button id="redo">rehacer ⇧⌘Z</button>
     <button id="reset">empezar de cero</button>
     <button id="share">compartir enlace</button>
+    <button id="gallery-btn">galería</button>
     <button id="export">exportar .json</button>
     <button id="import">importar .json</button>
     <input id="file" type="file" accept=".json" hidden />
@@ -161,6 +205,17 @@
       <label>goma</label>
       <div class="tray-row" id="tool-tray"></div>
     </div>
+  </div>
+
+  <div id="gallery" class="panel" hidden>
+    <div id="gallery-head">
+      <b>galería</b>
+      <div class="tray-row">
+        <button id="gallery-save">guardar la de ahora</button>
+        <button id="gallery-close">cerrar</button>
+      </div>
+    </div>
+    <div id="gallery-grid"></div>
   </div>
 
   <div id="toast"></div>
@@ -184,6 +239,10 @@
     <b>gravedad</b>: suelta tu criatura al mundo, a ver si aguanta ·
     <b>suelo</b>: una mesa invisible en y=0 — apágala si quieres construir
     hacia el vacío<br />
+    <b>t</b>: tensión — cada barra se tiñe de verde a rojo según cuánto
+    sufre · <b>caja contada</b>: piezas finitas, como la caja de verdad ·
+    clica una <b>barra</b> con otro color activo para repintarla<br />
+    <b>galería</b>: guarda tus criaturas con miniatura y recupéralas<br />
     <b>f</b>: centrar la cámara en la bola seleccionada (o en todo, si no
     hay ninguna) · <b>proyección</b>: perspectiva u ortográfica, como en
     Blender

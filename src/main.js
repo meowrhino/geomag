@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { Structure, PANEL_TYPES, DIRECTION_MODES, rodEnds, ROD_LENGTH } from './structure.js';
+import { Structure, PANEL_TYPES, DIRECTION_MODES, rodEnds, ROD_LENGTH, dist } from './structure.js';
 import { relax, residual, Gravity, clampFloor } from './solver.js';
 
 const BALL_R = 0.22;
@@ -37,6 +37,49 @@ let selected = null; // id de la bola seleccionada, o null
 let mode = { kind: 'rod', color: 'amarillo' }; // o { kind: 'panel', type }
 let dirMode = 'diagonales'; // qué juego de ejes sugieren los fantasmas
 let orientMode = 'global'; // cómo se orienta ese juego de ejes: global, vista o local
+let tensionOn = false; // pintar cada barra según cuánto sufre
+let boxOn = false; // caja contada: las piezas se acaban, como en la realidad
+
+// La caja de verdad: si se acaban las bolas, a desmontar algo. Los números
+// son generosos pero finitos — el puzzle es qué construyes con lo que hay.
+const BOX_LIMITS = {
+  bolas: 30,
+  barras: { amarillo: 12, rojo: 12, azul: 12, verde: 12 },
+  paneles: { triangulo: 8, cuadrado: 6, rombo: 6, pentagono: 2 },
+};
+const usedRods = (color) =>
+  [...structure.rods.values()].filter((c) => c === color).length;
+const usedPanels = (type) =>
+  [...structure.panels.values()].filter((p) => p.type === type).length;
+const rodsLeft = (color) => BOX_LIMITS.barras[color] - usedRods(color);
+const panelsLeft = (type) => BOX_LIMITS.paneles[type] - usedPanels(type);
+const ballsLeft = () => BOX_LIMITS.bolas - structure.balls.size;
+
+// Con la caja contada, cada pieza se pide antes de usarla; si no queda,
+// golpe sordo y a otra cosa.
+function takeRod(color, needsBall) {
+  if (!boxOn) return true;
+  if (rodsLeft(color) <= 0) {
+    clack(300, 0.3);
+    toast(`la caja no tiene más barras (${color})`);
+    return false;
+  }
+  if (needsBall && ballsLeft() <= 0) {
+    clack(300, 0.3);
+    toast('la caja no tiene más bolas');
+    return false;
+  }
+  return true;
+}
+function takePanel(type) {
+  if (!boxOn) return true;
+  if (panelsLeft(type) <= 0) {
+    clack(300, 0.3);
+    toast(`la caja no tiene más paneles (${type})`);
+    return false;
+  }
+  return true;
+}
 
 // ---------------------------------------------------------------- escena
 
@@ -236,11 +279,13 @@ function sync() {
   for (const [rk, mesh] of rodMeshes)
     if (structure.rods.get(rk) !== mesh.userData.color) {
       world.remove(mesh);
+      mesh.material.dispose(); // material propio de cada barra (ver abajo)
       rodMeshes.delete(rk);
     }
   for (const [rk, color] of structure.rods)
     if (!rodMeshes.has(rk)) {
-      const mesh = new THREE.Mesh(rodGeo, rodMats[color] ?? rodMats.amarillo);
+      // material clonado por barra: el modo tensión tiñe cada una a su bola
+      const mesh = new THREE.Mesh(rodGeo, (rodMats[color] ?? rodMats.amarillo).clone());
       mesh.castShadow = true;
       mesh.userData = { kind: 'rod', rk, color, base: new THREE.Vector3(1, 1, 1) };
       world.add(mesh);
@@ -406,6 +451,15 @@ function select(id) {
 function updateTransforms() {
   for (const [id, mesh] of ballMeshes) mesh.position.set(...structure.balls.get(id));
   for (const [rk, mesh] of rodMeshes) orientRod(mesh, ...rodEnds(rk));
+  // Tensión: verde = a gusto, rojo = estirada/comprimida un 6% o más.
+  // Se ve la estructura avisar antes de rendirse bajo gravedad.
+  if (tensionOn)
+    for (const [rk, mesh] of rodMeshes) {
+      const [a, b] = rodEnds(rk);
+      const d = dist(structure.balls.get(a), structure.balls.get(b));
+      const t = Math.min(Math.abs(d - ROD_LENGTH) / ROD_LENGTH / 0.06, 1);
+      mesh.material.color.setHSL(0.36 * (1 - t), 0.85, 0.42 + 0.1 * t);
+    }
   for (const mesh of panelMeshes.values()) updateMembrane(mesh);
   for (const mesh of candidates.children) updateMembrane(mesh);
   if (selected) {
@@ -608,6 +662,7 @@ function settle() {
 }
 
 function placePanel(cycle, type) {
+  if (!takePanel(type)) return;
   if (!structure.addPanel(cycle, type)) return;
   relax(structure, 150);
   if (residual(structure) > 0.08) {
@@ -685,6 +740,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
     // en modo libre, un clic sobre la esfera planta barra + bola ahí mismo
     const step = freePick(e);
     if (step) {
+      if (!takeRod(mode.color, true)) return;
       const to = structure.grow(selected, step.toArray(), mode.color);
       clack(2300);
       settle();
@@ -696,10 +752,20 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   }
   const { kind } = mesh.userData;
   if (kind === 'ball') select(mesh.userData.id);
+  // clic sobre una barra con otro color activo: se repinta sin desmontar
+  if (kind === 'rod' && mode.kind === 'rod') {
+    const { rk } = mesh.userData;
+    if (structure.rods.get(rk) !== mode.color && takeRod(mode.color, false)) {
+      structure.paintRod(rk, mode.color);
+      clack(1600, 0.3);
+      sync();
+    }
+  }
   if (kind === 'cand') placePanel(mesh.userData.cycle, mode.type);
   if (kind === 'ghost' && selected) {
     const { cand } = mesh.userData;
     const color = mode.kind === 'rod' ? mode.color : 'amarillo';
+    if (!takeRod(color, cand.kind === 'new')) return;
     const to =
       cand.kind === 'new'
         ? structure.grow(selected, cand.step, color)
@@ -726,11 +792,13 @@ addEventListener('keydown', (e) => {
     return;
   }
   if (e.key === 'Escape') {
+    if (!galleryEl.hidden) return closeGallery();
     select(null);
     setMode({ kind: 'rod', color: mode.color ?? 'amarillo' });
   }
   if (e.key === 'e') cycleAxes();
   if (e.key === 'o') cycleOrient();
+  if (e.key === 't') toggleTension();
   if (e.key === 'f') frameTarget();
   if (dragging && /^[xyz]$/i.test(e.key)) setAxisLock(e.key.toLowerCase());
   const rods = Object.keys(ROD_COLORS);
@@ -768,6 +836,8 @@ const hud = {
   frame: document.getElementById('frame'),
   axes: document.getElementById('axes'),
   orient: document.getElementById('orient'),
+  tension: document.getElementById('tension'),
+  box: document.getElementById('box'),
 };
 
 function cycleAxes() {
@@ -814,7 +884,7 @@ for (const [name, hex] of Object.entries(ROD_COLORS)) {
     `barra ${name}`,
     () => setMode({ kind: 'rod', color: name })
   );
-  trayButtons.push({ el, match: (m) => m.kind === 'rod' && m.color === name, count: () => [...structure.rods.values()].filter((c) => c === name).length });
+  trayButtons.push({ el, match: (m) => m.kind === 'rod' && m.color === name, count: () => usedRods(name), left: () => rodsLeft(name) });
 }
 for (const [name, hex] of Object.entries(PANEL_COLORS)) {
   const css = '#' + hex.toString(16).padStart(6, '0');
@@ -824,7 +894,7 @@ for (const [name, hex] of Object.entries(PANEL_COLORS)) {
     `panel ${name}`,
     () => setMode({ kind: 'panel', type: name })
   );
-  trayButtons.push({ el, match: (m) => m.kind === 'panel' && m.type === name, count: () => [...structure.panels.values()].filter((p) => p.type === name).length });
+  trayButtons.push({ el, match: (m) => m.kind === 'panel' && m.type === name, count: () => usedPanels(name), left: () => panelsLeft(name) });
 }
 // La goma: borrar con clic normal — imprescindible en táctil, donde no
 // existe el clic derecho.
@@ -848,9 +918,17 @@ function setMode(next) {
 setMode(mode);
 
 function updateHud() {
-  hud.count.textContent = `${structure.balls.size} bolas · ${structure.rods.size} barras · ${structure.panels.size} paneles`;
-  for (const { el, count } of trayButtons)
-    el.querySelector('.n').textContent = count() || '';
+  const bolas = boxOn
+    ? `${structure.balls.size}/${BOX_LIMITS.bolas} bolas`
+    : `${structure.balls.size} bolas`;
+  hud.count.textContent = `${bolas} · ${structure.rods.size} barras · ${structure.panels.size} paneles`;
+  // con la caja contada, el numerito de cada pieza pasa de "usadas" a
+  // "las que quedan", y la pieza agotada se apaga
+  for (const { el, count, left } of trayButtons) {
+    el.querySelector('.n').textContent =
+      boxOn && left ? left() : count() || '';
+    el.classList.toggle('out', Boolean(boxOn && left && left() <= 0));
+  }
 }
 
 let toastTimer = null;
@@ -884,6 +962,26 @@ hud.floor.addEventListener('click', () => {
   sync();
 });
 hud.floor.classList.toggle('on', floorOn);
+
+// Tensión: cada barra confiesa cuánto la están estirando o comprimiendo.
+hud.tension.addEventListener('click', toggleTension);
+function toggleTension() {
+  tensionOn = !tensionOn;
+  hud.tension.textContent = `tensión: ${tensionOn ? 'sí' : 'no'}`;
+  hud.tension.classList.toggle('on', tensionOn);
+  if (!tensionOn)
+    for (const mesh of rodMeshes.values())
+      mesh.material.color.setHex(ROD_COLORS[mesh.userData.color]);
+}
+
+hud.box.addEventListener('click', () => {
+  boxOn = !boxOn;
+  hud.box.textContent = `caja: ${boxOn ? 'contada' : 'infinita'}`;
+  hud.box.classList.toggle('on', boxOn);
+  if (boxOn)
+    toast(`caja contada: ${BOX_LIMITS.bolas} bolas, 12 barras de cada color, paneles justos`);
+  updateHud();
+});
 
 // ------------------------------------------------------------ cámara: Blender-style
 
@@ -997,6 +1095,139 @@ fileInput.addEventListener('change', async () => {
     alert('Ese archivo no parece un geomag.json válido.');
   }
   fileInput.value = '';
+});
+
+// ---------------------------------------------------------------- galería
+
+// Construcciones guardadas con su miniatura, en localStorage. La miniatura
+// es la vista actual sin andamiaje (fantasmas, esfera, rejilla fuera).
+const GALLERY_KEY = 'geomag-galeria';
+const galleryEl = document.getElementById('gallery');
+const galleryGrid = document.getElementById('gallery-grid');
+
+function readGallery() {
+  try {
+    return JSON.parse(localStorage.getItem(GALLERY_KEY)) ?? [];
+  } catch {
+    return [];
+  }
+}
+const writeGallery = (list) =>
+  localStorage.setItem(GALLERY_KEY, JSON.stringify(list));
+
+function snapThumb() {
+  const helpers = [ghosts, candidates, marker, previewRod, freeSphere, freeGhost, grid];
+  const wasVisible = helpers.map((o) => o.visible);
+  helpers.forEach((o) => (o.visible = false));
+  // Cámara propia que enmarca la criatura entera desde el ángulo actual:
+  // la miniatura sale bien encuadrada aunque el usuario esté lejísimos.
+  const box = new THREE.Box3();
+  for (const p of structure.balls.values())
+    box.expandByPoint(new THREE.Vector3(...p));
+  const center = box.getCenter(new THREE.Vector3());
+  const span = Math.max(box.getSize(new THREE.Vector3()).length() * 1.1, 3);
+  const dir = new THREE.Vector3()
+    .subVectors(activeCamera.position, controls.target)
+    .normalize();
+  const cam = new THREE.PerspectiveCamera(
+    50, renderer.domElement.width / renderer.domElement.height, 0.1, 100
+  );
+  cam.position.copy(center).addScaledVector(dir, span);
+  cam.lookAt(center);
+  renderer.render(scene, cam); // frame recién pintado: toDataURL sin preserveDrawingBuffer
+  const src = renderer.domElement;
+  if (!src.width || !src.height) {
+    // ventana aún sin medidas (pestaña en segundo plano): sin miniatura
+    helpers.forEach((o, i) => (o.visible = wasVisible[i]));
+    return null;
+  }
+  const c = document.createElement('canvas');
+  c.width = 240;
+  c.height = Math.max(1, Math.round((240 * src.height) / src.width));
+  c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+  helpers.forEach((o, i) => (o.visible = wasVisible[i]));
+  return c.toDataURL('image/jpeg', 0.72);
+}
+
+function renderGallery() {
+  const list = readGallery();
+  galleryGrid.textContent = '';
+  if (!list.length) {
+    const empty = document.createElement('div');
+    empty.className = 'gempty';
+    empty.textContent =
+      'nada guardado todavía — construye algo y dale a «guardar la de ahora»';
+    galleryGrid.append(empty);
+    return;
+  }
+  for (const entry of list) {
+    const card = document.createElement('div');
+    card.className = 'gcard';
+    const img = document.createElement('img');
+    if (entry.thumb) img.src = entry.thumb;
+    img.alt = entry.name;
+    const name = document.createElement('div');
+    name.className = 'gname';
+    name.textContent = entry.name;
+    const date = document.createElement('div');
+    date.className = 'gdate';
+    date.textContent = entry.date;
+    const btns = document.createElement('div');
+    btns.className = 'gbtns';
+    const loadBtn = document.createElement('button');
+    loadBtn.textContent = 'cargar';
+    loadBtn.addEventListener('click', () => {
+      structure.load(entry.data); // pasa por snapshot: ⌘Z te devuelve lo de antes
+      gravity.forget();
+      select(null);
+      if (floorOn) clampFloor(structure, undefined, FLOOR_Y);
+      settle();
+      sync();
+      closeGallery();
+      toast(`«${entry.name}» sobre la mesa`);
+    });
+    const delBtn = document.createElement('button');
+    delBtn.textContent = 'borrar';
+    delBtn.addEventListener('click', () => {
+      if (!confirm(`¿Borrar «${entry.name}» de la galería?`)) return;
+      writeGallery(readGallery().filter((e) => e.id !== entry.id));
+      renderGallery();
+    });
+    btns.append(loadBtn, delBtn);
+    card.append(img, name, date, btns);
+    galleryGrid.append(card);
+  }
+}
+
+function openGallery() {
+  renderGallery();
+  galleryEl.hidden = false;
+}
+function closeGallery() {
+  galleryEl.hidden = true;
+}
+
+document.getElementById('gallery-btn').addEventListener('click', openGallery);
+document.getElementById('gallery-close').addEventListener('click', closeGallery);
+document.getElementById('gallery-save').addEventListener('click', () => {
+  const name = prompt('¿cómo se llama esta criatura?', 'sin título');
+  if (name === null) return;
+  const list = readGallery();
+  list.unshift({
+    id: Date.now(),
+    name: name.trim() || 'sin título',
+    date: new Date().toLocaleDateString('es'),
+    thumb: snapThumb(),
+    data: structure.toJSON(),
+  });
+  try {
+    writeGallery(list);
+  } catch {
+    toast('galería llena: borra alguna construcción');
+    return;
+  }
+  renderGallery();
+  toast('guardada en la galería');
 });
 
 // ------------------------------------------------------- compartir por URL

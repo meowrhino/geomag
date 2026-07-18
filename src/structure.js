@@ -128,6 +128,14 @@ export class Structure {
     if (this.balls.size === 0) this.addBall([0, 0, 0]);
   }
 
+  // Repintar sin desmontar: la misma barra, otro color.
+  paintRod(rk, color) {
+    if (!this.rods.has(rk) || this.rods.get(rk) === color) return false;
+    this.snapshot();
+    this.rods.set(rk, color);
+    return true;
+  }
+
   removeRod(rk) {
     if (!this.rods.has(rk)) return;
     this.snapshot();

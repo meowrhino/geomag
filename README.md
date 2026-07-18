@@ -38,6 +38,12 @@ y abrir http://localhost:3000 (o el puerto que diga).
   hay clic derecho) borra bola, barra o panel · **1–8** elige pieza ·
   **⌘Z** deshace · **⇧⌘Z** rehace · **esc** suelta
 - Cada pieza hace *clac* al encajar, como debe ser.
+- **t** (tensión): cada barra se tiñe de verde a rojo según cuánto la
+  estiran — la estructura avisa antes de rendirse bajo gravedad.
+- **caja contada**: piezas finitas (30 bolas, 12 barras de cada color,
+  paneles justos); la bandeja pasa a contar las que quedan.
+- Clic en una **barra** con otro color activo la repinta sin desmontar.
+- **galería**: guarda tus criaturas con miniatura y recupéralas.
 - Se guarda solo en `localStorage`; **compartir enlace** mete el JSON
   comprimido en el hash de la URL (sin servidor), y también hay
   exportar/importar `.json`.
@@ -71,7 +77,6 @@ se mueven: el solver manda).
 
 ## Ideas para seguir
 
-- modo caja limitada: empiezas con las piezas contadas, como en la realidad
-- galería de construcciones guardadas con miniaturas
-- barras coloreadas por tensión: que la estructura avise antes de derrumbarse
-- repintar barras ya puestas clicándolas con otro color activo
+- retos: "construye un puente que aguante" con la caja contada
+- que la galería comparta directamente (miniatura + enlace en una tarjeta)
+- sonido espacial: el clac más lejos suena más lejos
