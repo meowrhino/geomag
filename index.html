@@ -140,7 +140,9 @@
       <button id="view-top">arriba</button>
     </div>
     <button id="undo">deshacer ⌘Z</button>
+    <button id="redo">rehacer ⇧⌘Z</button>
     <button id="reset">empezar de cero</button>
+    <button id="share">compartir enlace</button>
     <button id="export">exportar .json</button>
     <button id="import">importar .json</button>
     <input id="file" type="file" accept=".json" hidden />
@@ -155,6 +157,10 @@
       <label>paneles</label>
       <div class="tray-row" id="panel-tray"></div>
     </div>
+    <div class="tray-group">
+      <label>goma</label>
+      <div class="tray-row" id="tool-tray"></div>
+    </div>
   </div>
 
   <div id="toast"></div>
@@ -166,9 +172,12 @@
     elige un <b>panel</b> en la bandeja y clica un hueco que le valga —
     el panel fuerza la forma: 5 barras + panel rojo = pentágono<br />
     <b>e</b>: cambiar ejes — diagonales (tetra/octa), cúbicos (torres y
-    cubos rectos), hexagonales (hexágonos y prismas); se pueden mezclar<br />
-    <b>clic derecho</b>: borrar bola, barra o panel · <b>1–8</b>: elegir pieza ·
-    <b>esc</b>: soltar · <b>⌘Z</b>: deshacer<br />
+    cubos rectos), hexagonales (hexágonos y prismas) y <b>libre</b>: la
+    esfera entera alrededor de la bola es clicable, la barra sale hacia
+    donde tú quieras; se pueden mezclar<br />
+    <b>clic derecho</b> o la <b>goma</b> (9): borrar bola, barra o panel ·
+    <b>1–8</b>: elegir pieza · <b>esc</b>: soltar ·
+    <b>⌘Z</b>: deshacer · <b>⇧⌘Z</b>: rehacer<br />
     <b>arrastra</b> una bola para moverla — con <b>X</b>/<b>Y</b>/<b>Z</b> bloqueas
     el eje de arrastre (repite la tecla para soltarlo)<br />
     <b>o</b>: orientación de las sugerencias — global, vista o local<br />

@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { Structure, PANEL_TYPES, DIRECTION_MODES, rodEnds } from './structure.js';
+import { Structure, PANEL_TYPES, DIRECTION_MODES, rodEnds, ROD_LENGTH } from './structure.js';
 import { relax, residual, Gravity, clampFloor } from './solver.js';
 
 const BALL_R = 0.22;
@@ -290,6 +290,25 @@ const previewRod = new THREE.Mesh(rodGeo, previewMat);
 previewRod.visible = false;
 scene.add(previewRod);
 
+// Modo libre: la esfera de radio L alrededor de la bola seleccionada es
+// clicable entera — el imán de verdad no sabe de ejes. No entra en pick():
+// solo se consulta cuando ningún otro objeto atrapa el rayo.
+const freeSphere = new THREE.Mesh(
+  new THREE.SphereGeometry(1, 48, 24),
+  new THREE.MeshBasicMaterial({
+    color: 0xffffff, transparent: true, opacity: 0.05,
+    depthWrite: false, side: THREE.DoubleSide,
+  })
+);
+freeSphere.scale.setScalar(ROD_LENGTH);
+freeSphere.visible = false;
+scene.add(freeSphere);
+
+const freeGhost = new THREE.Mesh(ballGeo, ghostMat);
+freeGhost.scale.setScalar(0.8);
+freeGhost.visible = false;
+scene.add(freeGhost);
+
 // El marco que orienta el juego de ejes de sugerencia. En global son los
 // ejes del mundo tal cual; en vista, los de la cámara (derecha/arriba/
 // adelante); en local, el esqueleto de barras que ya salen de la bola —
@@ -310,7 +329,10 @@ function orientFrame(ballId) {
   }
   if (dirs.length === 0) return new THREE.Quaternion();
 
-  const steps = DIRECTION_MODES[dirMode].map((s) => new THREE.Vector3(...s).normalize());
+  const stepDefs = DIRECTION_MODES[dirMode];
+  if (stepDefs.length === 0) return new THREE.Quaternion(); // libre: sin red que alinear
+
+  const steps = stepDefs.map((s) => new THREE.Vector3(...s).normalize());
   const r1 = dirs[0];
   let i1 = 0, best = -Infinity;
   steps.forEach((s, i) => {
@@ -347,7 +369,10 @@ function orientFrame(ballId) {
 function refreshGhosts() {
   ghosts.clear();
   previewRod.visible = false;
+  freeGhost.visible = false;
   marker.visible = Boolean(selected);
+  freeSphere.visible =
+    Boolean(selected) && dirMode === 'libre' && mode.kind === 'rod';
   if (!selected) return;
   const q = orientFrame(selected);
   const steps = DIRECTION_MODES[dirMode].map((s) =>
@@ -386,6 +411,7 @@ function updateTransforms() {
   if (selected) {
     const from = structure.balls.get(selected);
     marker.position.set(...from);
+    freeSphere.position.set(...from);
     for (const g of ghosts.children) {
       const { cand } = g.userData;
       if (cand.kind === 'new') g.position.set(...from.map((v, i) => v + cand.step[i]));
@@ -419,6 +445,22 @@ function pick(event) {
     ...panelMeshes.values(),
   ])[0];
   return hit?.object ?? null;
+}
+
+// En modo libre, el punto de la esfera bajo el puntero como paso de barra
+// (vector de longitud L desde la bola seleccionada), o null si no aplica.
+function freePick(event) {
+  if (dirMode !== 'libre' || !selected || mode.kind !== 'rod') return null;
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.set(
+    ((event.clientX - rect.left) / rect.width) * 2 - 1,
+    -((event.clientY - rect.top) / rect.height) * 2 + 1
+  );
+  raycaster.setFromCamera(pointer, activeCamera);
+  const hit = raycaster.intersectObject(freeSphere)[0];
+  if (!hit) return null;
+  const from = new THREE.Vector3(...structure.balls.get(selected));
+  return hit.point.sub(from).normalize().multiplyScalar(ROD_LENGTH);
 }
 
 function setHover(mesh) {
@@ -534,6 +576,33 @@ function endDrag(e) {
   sync();
 }
 
+// ------------------------------------------------------------------ sonido
+
+// El *clac* del imán: dos osciladores cortos (el golpe y su cuerpo grave)
+// con caída exponencial. El AudioContext nace en el primer gesto del
+// usuario, que es justo cuando suena por primera vez.
+let audioCtx = null;
+function clack(freq = 2300, vol = 0.4) {
+  try {
+    audioCtx ??= new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const t = audioCtx.currentTime;
+    const gain = audioCtx.createGain();
+    gain.connect(audioCtx.destination);
+    gain.gain.setValueAtTime(vol, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+    for (const [f, dur] of [[freq, 0.035], [freq * 0.42, 0.08]]) {
+      const osc = audioCtx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(f, t);
+      osc.frequency.exponentialRampToValueAtTime(f * 0.55, t + dur);
+      osc.connect(gain);
+      osc.start(t);
+      osc.stop(t + dur);
+    }
+  } catch { /* sin audio no pasa nada: el juguete sigue */ }
+}
+
 function settle() {
   if (!gravityOn) relax(structure, 80, undefined, floorOn ? FLOOR_Y : null);
 }
@@ -544,7 +613,10 @@ function placePanel(cycle, type) {
   if (residual(structure) > 0.08) {
     structure.undo();
     relax(structure, 40);
+    clack(300, 0.3); // golpe sordo: la pieza no entra
     toast('ese panel no encaja ahí');
+  } else {
+    clack(1300);
   }
   gravity.forget();
   sync();
@@ -559,7 +631,23 @@ renderer.domElement.addEventListener('pointermove', (e) => {
     startDrag(downBallId, e);
     return;
   }
-  setHover(pick(e));
+  const mesh = pick(e);
+  setHover(mesh);
+  // nada bajo el puntero: en modo libre, la esfera ofrece un preview
+  const step = mesh ? null : freePick(e);
+  freeGhost.visible = Boolean(step);
+  if (step) {
+    const a = new THREE.Vector3(...structure.balls.get(selected));
+    freeGhost.position.copy(a).add(step);
+    previewMat.color.setHex(ROD_COLORS[mode.color]);
+    previewRod.visible = true;
+    previewRod.position.copy(a).addScaledVector(step, 0.5);
+    previewRod.quaternion.setFromUnitVectors(UP, step.clone().normalize());
+    previewRod.scale.set(ROD_R, step.length(), ROD_R);
+    document.body.style.cursor = 'pointer';
+  } else if (!mesh) {
+    previewRod.visible = false;
+  }
 });
 renderer.domElement.addEventListener('pointerdown', (e) => {
   downAt = { x: e.clientX, y: e.clientY };
@@ -579,19 +667,33 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   const mesh = pick(e);
   setHover(null);
 
-  if (e.button === 2) {
+  // borrar: con clic derecho, o con clic normal si la goma está activa
+  if (e.button === 2 || (mesh && mode.kind === 'erase')) {
     if (!mesh) return;
     const { kind, id, rk, pk } = mesh.userData;
     if (kind === 'ball') structure.removeBall(id);
     else if (kind === 'rod') structure.removeRod(rk);
     else if (kind === 'panel') structure.removePanel(pk);
     else return;
+    clack(500, 0.35);
     settle();
     sync();
     return;
   }
 
-  if (!mesh) return select(null);
+  if (!mesh) {
+    // en modo libre, un clic sobre la esfera planta barra + bola ahí mismo
+    const step = freePick(e);
+    if (step) {
+      const to = structure.grow(selected, step.toArray(), mode.color);
+      clack(2300);
+      settle();
+      select(to);
+      sync();
+      return;
+    }
+    return select(null);
+  }
   const { kind } = mesh.userData;
   if (kind === 'ball') select(mesh.userData.id);
   if (kind === 'cand') placePanel(mesh.userData.cycle, mode.type);
@@ -602,6 +704,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
       cand.kind === 'new'
         ? structure.grow(selected, cand.step, color)
         : structure.link(selected, cand.to, color);
+    if (to !== null) clack(cand.kind === 'link' ? 1900 : 2300);
     settle();
     select(to ?? selected); // encadena: la bola nueva queda seleccionada
     sync();
@@ -618,7 +721,8 @@ addEventListener('keydown', (e) => {
   // medio, e.key puede no ser exactamente 'z' y el atajo se escapaba.
   if ((e.metaKey || e.ctrlKey) && (e.code === 'KeyZ' || e.key === 'z' || e.key === 'Z')) {
     e.preventDefault();
-    undo();
+    if (e.shiftKey) redo();
+    else undo();
     return;
   }
   if (e.key === 'Escape') {
@@ -634,10 +738,18 @@ addEventListener('keydown', (e) => {
   const n = Number(e.key);
   if (rods[n - 1]) setMode({ kind: 'rod', color: rods[n - 1] });
   if (panels[n - 5]) setMode({ kind: 'panel', type: panels[n - 5] });
+  if (n === 9) setMode({ kind: 'erase' });
 });
 
 function undo() {
   if (!structure.undo()) return;
+  gravity.forget();
+  settle();
+  sync();
+}
+
+function redo() {
+  if (!structure.redo()) return;
   gravity.forget();
   settle();
   sync();
@@ -662,6 +774,8 @@ function cycleAxes() {
   const names = Object.keys(DIRECTION_MODES);
   dirMode = names[(names.indexOf(dirMode) + 1) % names.length];
   hud.axes.textContent = `ejes: ${dirMode}`;
+  if (dirMode === 'libre')
+    toast('modo libre: clica en cualquier punto de la esfera');
   refreshGhosts();
 }
 hud.axes.addEventListener('click', cycleAxes);
@@ -712,12 +826,24 @@ for (const [name, hex] of Object.entries(PANEL_COLORS)) {
   );
   trayButtons.push({ el, match: (m) => m.kind === 'panel' && m.type === name, count: () => [...structure.panels.values()].filter((p) => p.type === name).length });
 }
+// La goma: borrar con clic normal — imprescindible en táctil, donde no
+// existe el clic derecho.
+{
+  const el = trayButton(
+    document.getElementById('tool-tray'),
+    `<svg viewBox="0 0 24 24" fill="none" stroke="#e5484d" stroke-width="2.5" stroke-linecap="round"><path d="M5 5l14 14M19 5L5 19"/></svg>`,
+    'goma: borrar piezas (9)',
+    () => setMode({ kind: 'erase' })
+  );
+  trayButtons.push({ el, match: (m) => m.kind === 'erase', count: () => '' });
+}
 
 function setMode(next) {
   mode = next;
   for (const { el, match } of trayButtons)
     el.classList.toggle('active', match(mode));
   refreshCandidates();
+  refreshGhosts(); // la esfera libre solo vive en modo barra
 }
 setMode(mode);
 
@@ -835,6 +961,7 @@ document.getElementById('view-side').addEventListener('click', () => setQuickVie
 document.getElementById('view-top').addEventListener('click', () => setQuickView('arriba'));
 
 document.getElementById('undo').addEventListener('click', undo);
+document.getElementById('redo').addEventListener('click', redo);
 document.getElementById('reset').addEventListener('click', () => {
   if (confirm('¿Empezar de cero? (puedes deshacer con ⌘Z)')) {
     structure.reset();
@@ -872,6 +999,44 @@ fileInput.addEventListener('change', async () => {
   fileInput.value = '';
 });
 
+// ------------------------------------------------------- compartir por URL
+
+// El JSON entero, comprimido (deflate) y en base64url, cabe en el hash:
+// una estructura se comparte con un link, sin servidor de por medio.
+async function packHash(data) {
+  const stream = new Blob([new TextEncoder().encode(JSON.stringify(data))])
+    .stream()
+    .pipeThrough(new CompressionStream('deflate-raw'));
+  const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+  let s = '';
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+}
+
+async function unpackHash(packed) {
+  const bin = atob(packed.replaceAll('-', '+').replaceAll('_', '/'));
+  const stream = new Blob([Uint8Array.from(bin, (c) => c.charCodeAt(0))])
+    .stream()
+    .pipeThrough(new DecompressionStream('deflate-raw'));
+  return JSON.parse(await new Response(stream).text());
+}
+
+document.getElementById('share').addEventListener('click', async () => {
+  try {
+    const packed = await packHash(structure.toJSON());
+    const url = location.origin + location.pathname + '#g=' + packed;
+    history.replaceState(null, '', '#g=' + packed);
+    try {
+      await navigator.clipboard.writeText(url);
+      toast('enlace copiado — pégalo donde quieras');
+    } catch {
+      toast('enlace listo en la barra de direcciones');
+    }
+  } catch {
+    toast('no se pudo crear el enlace');
+  }
+});
+
 // ----------------------------------------------------------------- arranque
 
 try {
@@ -882,6 +1047,29 @@ try {
     relax(structure, 60, undefined, floorOn ? FLOOR_Y : null);
   }
 } catch { /* autosave corrupto: empezamos de cero */ }
+
+// Un enlace compartido pisa el autosave — guardamos el anterior en
+// `geomag-autosave-prev` por si el link te aterriza encima de tu obra.
+(async () => {
+  const m = location.hash.match(/^#g=(.+)$/);
+  if (!m) return;
+  try {
+    const data = await unpackHash(m[1]);
+    const prev = localStorage.getItem('geomag-autosave');
+    if (prev) localStorage.setItem('geomag-autosave-prev', prev);
+    structure.restore(data);
+    structure.history.length = 0;
+    structure.redoStack.length = 0;
+    if (floorOn) clampFloor(structure, undefined, FLOOR_Y);
+    relax(structure, 60, undefined, floorOn ? FLOOR_Y : null);
+    gravity.forget();
+    select(null);
+    sync();
+    toast('estructura cargada del enlace');
+  } catch {
+    toast('ese enlace no se pudo leer');
+  }
+})();
 
 addEventListener('resize', () => {
   perspCamera.aspect = innerWidth / innerHeight;

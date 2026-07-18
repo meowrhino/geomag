@@ -21,8 +21,10 @@ y abrir http://localhost:3000 (o el puerto que diga).
   direcciones sugeridas. Clic en un fantasma añade barra + bola y encadena.
 - **e** (o el botón "ejes") cambia el juego de direcciones: **diagonales**
   (FCC: tetraedros, octaedros), **cúbicos** (torres rectas y cubos, que en
-  FCC son imposibles: no hay tres pasos perpendiculares) y **hexagonales**
-  (hexágonos con centro, prismas). Se mezclan en la misma estructura.
+  FCC son imposibles: no hay tres pasos perpendiculares), **hexagonales**
+  (hexágonos con centro, prismas) y **libre**: la esfera entera de radio L
+  alrededor de la bola se vuelve clicable — el imán de verdad no sabe de
+  ejes. Se mezclan en la misma estructura.
 - Los fantasmas **verdes** son el alcance del imán: enganchan con una bola
   que ya existe y cierran ciclos.
 - Elige un **panel** en la bandeja y los huecos donde cabe se iluminan;
@@ -32,9 +34,13 @@ y abrir http://localhost:3000 (o el puerto que diga).
 - **gravedad** suelta tu criatura al mundo, a ver si aguanta (Verlet + suelo
   con fricción; las estructuras se derrumban con la misma honestidad que
   las de verdad).
-- **clic derecho** borra bola, barra o panel · **1–8** elige pieza ·
-  **⌘Z** deshace · **esc** suelta
-- Se guarda solo en `localStorage`; exportar/importar `.json` para compartir.
+- **clic derecho** (o la **goma** de la bandeja, tecla **9** — en móvil no
+  hay clic derecho) borra bola, barra o panel · **1–8** elige pieza ·
+  **⌘Z** deshace · **⇧⌘Z** rehace · **esc** suelta
+- Cada pieza hace *clac* al encajar, como debe ser.
+- Se guarda solo en `localStorage`; **compartir enlace** mete el JSON
+  comprimido en el hash de la URL (sin servidor), y también hay
+  exportar/importar `.json`.
 
 ## La idea bonita
 
@@ -65,7 +71,7 @@ se mueven: el solver manda).
 
 ## Ideas para seguir
 
-- arrastrar bolas con el ratón (agitar la estructura, puro juguete)
 - modo caja limitada: empiezas con las piezas contadas, como en la realidad
-- compartir estructuras por URL (el JSON comprimido en el hash)
 - galería de construcciones guardadas con miniaturas
+- barras coloreadas por tensión: que la estructura avise antes de derrumbarse
+- repintar barras ya puestas clicándolas con otro color activo

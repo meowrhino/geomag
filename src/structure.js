@@ -35,6 +35,9 @@ export const DIRECTION_MODES = {
     ]),
     [0, L, 0], [0, -L, 0],
   ],
+  // Sin pasos sugeridos: el imán engancha en cualquier ángulo. La vista
+  // ofrece la esfera entera de radio L alrededor de la bola seleccionada.
+  libre: [],
 };
 
 // El panel que eliges decide la forma: sus cuerdas fuerzan la geometría.
@@ -62,6 +65,7 @@ export class Structure {
     this.panels = new Map(); // panelKey -> { type, cycle, chords }
     this.nextId = 1;
     this.history = [];
+    this.redoStack = [];
     this.addBall([0, 0, 0]);
   }
 
@@ -76,12 +80,23 @@ export class Structure {
   snapshot() {
     this.history.push(JSON.stringify(this.toJSON()));
     if (this.history.length > 300) this.history.shift();
+    this.redoStack.length = 0; // una mutación nueva invalida el futuro
   }
 
   undo() {
     const prev = this.history.pop();
-    if (prev) this.restore(JSON.parse(prev));
-    return Boolean(prev);
+    if (!prev) return false;
+    this.redoStack.push(JSON.stringify(this.toJSON()));
+    this.restore(JSON.parse(prev));
+    return true;
+  }
+
+  redo() {
+    const next = this.redoStack.pop();
+    if (!next) return false;
+    this.history.push(JSON.stringify(this.toJSON()));
+    this.restore(JSON.parse(next));
+    return true;
   }
 
   // --- mutaciones ---
